@@ -1,0 +1,433 @@
+---
+title: "Baseline and Simple Models"
+output: html_document
+---
+```{r Load, clean and train-test split}
+###### DATA LOAD AND CLEAN ########
+
+tokens = read.csv(file="tokens_flipped.csv", header=TRUE, sep=",")
+eth = read.csv(file="ethereum_only.csv", header=TRUE, sep=",")
+google = read.csv(file='google_cleaned.csv', sep=',')
+
+tokens = tokens[,-1]
+eth_numonly = eth[,c('high', 'low', 'close', 'volume', 'market', 'open', 'spread')]
+
+###### Normalize Data #########
+# Functions for min-max normalization
+normalize = function(whole, train) {
+  return((whole - min(train)) / (max(train) - min(train)))
+}
+
+denormalize = function(x, original) {
+  return(x * (max(orginal) - min(original)) + min(original))
+}
+
+eth.norm = as.data.frame(lapply(eth_numonly[,1:7], normalize, train = eth_numonly[1:1111,1:7]))
+tokens.norm = as.data.frame(lapply(tokens, normalize, train = tokens[1:1111,]))
+google.norm = as.data.frame(lapply(google, normalize, train = google[1:1111,]))
+
+###### X SET CONVERTER ########
+# Function to convert x-data into 3D
+gen.x = function(data, steps) {
+  if (is.null(ncol(data))) {
+    variables = 1
+    batch = length(data) - steps
+  } else {
+    variables = ncol(data)
+    batch = nrow(data) - steps
+  }
+  
+  main.index = 1
+  
+  # Create empty matrix on right format:
+  nan = rep(NaN, batch*steps*variables) 
+  x.train = array(nan, c(batch, steps, variables))
+  
+  for (i in 1:batch) {
+    inner.index = 0
+    # First dimension
+    for (j in 1:steps) {
+      # Second dimension
+      
+      if (is.null(ncol(data))) {
+        
+        final.index = main.index + inner.index
+        x.train[i,j,1] = data[final.index]
+        
+      } else {
+        
+        for (z in 1:variables) {
+          final.index = main.index + inner.index
+          x.train[i,j,z] = data[final.index, z]
+        }
+      }
+      inner.index = inner.index + 1
+    }
+    main.index = main.index + 1
+  }
+  return(x.train)
+}
+
+##### Y SET CONVERTER #########
+gen.y = function(data, steps) {
+  
+  y = data[(steps+1):length(data)]
+  
+  return(y)
+}
+
+##### Generate test and train sets for eth #########
+x.train.eth = gen.x(data = eth.norm[1:1111,], steps = 10)
+x.train.tok = gen.x(data = tokens.norm[1:1111,], steps = 10)
+x.train.goo = gen.x(data = google.norm[1:1111,], steps = 10)
+
+x.test.eth = gen.x(data = eth.norm[1111:1211,], steps = 10)
+x.test.tok = gen.x(data = tokens.norm[1111:1211,], steps = 10)
+x.test.goo = gen.x(data = google.norm[1111:1211,], steps = 10)
+
+y.train = gen.y(data = eth.norm[1:1111, 3], steps = 10)
+y.test = gen.y(data = eth.norm [1111:1211, 3], steps = 10)
+```
+
+```{r KJØR KUN EN GANG Model prep }
+hist.one = list()
+hist.one.lstm = list()
+hist.one.goo = list()
+
+# Function to find the best of the models
+best.one <- function (history) {
+  c(val_loss=min(history$metrics$val_loss), epoch=which.min(history$metrics$val_loss))
+}
+
+library(keras)
+inputs.eth = layer_input(shape=c(10, 7), name='eth_input')
+inputs.tok = layer_input(shape=c(10, 907), name='tok_input')
+inputs.goo = layer_input(shape=c(10,57), name='goo_input')
+```
+
+```{r Initial investigation of one layer two inputs lstm - ETH AND TOKEN}
+lstm.eth1 = inputs.eth %>% layer_lstm(units = 10)
+lstm.tok1 = inputs.tok %>% layer_lstm(units = 50)
+final.out1 = layer_concatenate(c(lstm.eth1, lstm.tok1)) %>% layer_dense(units = 1)
+lstm.model1 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out1)
+lstm.model1 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history1 <- lstm.model1 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 400, validation_split=0.2)
+
+lstm.eth2 = inputs.eth %>% layer_lstm(units = 100)
+lstm.tok2 = inputs.tok %>% layer_lstm(units = 50)
+final.out2 = layer_concatenate(c(lstm.eth2, lstm.tok2)) %>% layer_dense(units = 1)
+lstm.model2 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out2)
+lstm.model2 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history2 <- lstm.model2 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 400, validation_split=0.2)
+
+lstm.eth3 = inputs.eth %>% layer_lstm(units = 300)
+lstm.tok3 = inputs.tok %>% layer_lstm(units = 50)
+final.out3 = layer_concatenate(c(lstm.eth3, lstm.tok3)) %>% layer_dense(units = 1)
+lstm.model3 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out3)
+lstm.model3 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history3 <- lstm.model3 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 400, validation_split=0.2)
+
+hist.one.lstm$one = lstm.two.history1
+hist.one.lstm$two = lstm.two.history2
+hist.one.lstm$three = lstm.two.history3
+
+lstm.eth4 = inputs.eth %>% layer_lstm(units = 50)
+lstm.tok4 = inputs.tok %>% layer_lstm(units = 10)
+final.out4 = layer_concatenate(c(lstm.eth4, lstm.tok4)) %>% layer_dense(units = 1)
+lstm.model4 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out4)
+lstm.model4 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history4 <- lstm.model4 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 400, validation_split=0.2)
+
+lstm.eth5 = inputs.eth %>% layer_lstm(units = 50)
+lstm.tok5 = inputs.tok %>% layer_lstm(units = 100)
+final.out5 = layer_concatenate(c(lstm.eth5, lstm.tok5)) %>% layer_dense(units = 1)
+lstm.model5 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out5)
+lstm.model5 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history5 <- lstm.model5 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 400, validation_split=0.2)
+
+lstm.eth6 = inputs.eth %>% layer_lstm(units = 50)
+lstm.tok6 = inputs.tok %>% layer_lstm(units = 300)
+final.out6 = layer_concatenate(c(lstm.eth6, lstm.tok6)) %>% layer_dense(units = 1)
+lstm.model6 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out6)
+lstm.model6 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history6 <- lstm.model6 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 400, validation_split=0.2)
+
+hist.one.lstm$four = lstm.two.history4 
+hist.one.lstm$five = lstm.two.history5
+hist.one.lstm$siox = lstm.two.history6
+
+
+two.score2 <- lstm.model6 %>% evaluate(list(x.test.eth, x.test.tok), y.test)
+
+
+sapply(hist.one.lstm, best.one)
+```
+
+```{r FURTHER TUNING OF LSTM ONE LAYER WITH TOKENS}
+lstm.eth7 = inputs.eth %>% layer_lstm(units = 300)
+lstm.tok7 = inputs.tok %>% layer_lstm(units = 200)
+final.out7 = layer_concatenate(c(lstm.eth7, lstm.tok7)) %>% layer_dense(units = 1)
+lstm.model7 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out7)
+lstm.model7 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history7 <- lstm.model7 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 400, validation_split=0.2)
+
+lstm.eth8 = inputs.eth %>% layer_lstm(units = 200)
+lstm.tok8 = inputs.tok %>% layer_lstm(units = 200)
+final.out8 = layer_concatenate(c(lstm.eth8, lstm.tok8)) %>% layer_dense(units = 1)
+lstm.model8 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out8)
+lstm.model8 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history8 <- lstm.model8 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 400, validation_split=0.2)
+
+lstm.eth9 = inputs.eth %>% layer_lstm(units = 300)
+lstm.tok9 = inputs.tok %>% layer_lstm(units = 300)
+final.out9 = layer_concatenate(c(lstm.eth9, lstm.tok9)) %>% layer_dense(units = 1)
+lstm.model9 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out9)
+lstm.model9 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history9 <- lstm.model9 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 400, validation_split=0.2)
+
+hist.one.lstm$seven = lstm.two.history7
+hist.one.lstm$eight = lstm.two.history8
+hist.one.lstm$nine = lstm.two.history9
+
+lstm.eth10 = inputs.eth %>% layer_lstm(units = 100)
+lstm.tok10 = inputs.tok %>% layer_lstm(units = 100)
+final.out10 = layer_concatenate(c(lstm.eth10, lstm.tok10)) %>% layer_dense(units = 1)
+lstm.model10 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out10)
+lstm.model10 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history10 <- lstm.model10 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 400, validation_split=0.2)
+
+lstm.eth11 = inputs.eth %>% layer_lstm(units = 500)
+lstm.tok11 = inputs.tok %>% layer_lstm(units = 200)
+final.out11 = layer_concatenate(c(lstm.eth11, lstm.tok11)) %>% layer_dense(units = 1)
+lstm.model11 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out11)
+lstm.model11 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history11 <- lstm.model11 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 400, validation_split=0.2)
+
+lstm.eth12 = inputs.eth %>% layer_lstm(units = 200)
+lstm.tok12 = inputs.tok %>% layer_lstm(units = 500)
+final.out12 = layer_concatenate(c(lstm.eth12, lstm.tok12)) %>% layer_dense(units = 1)
+lstm.model12 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out12)
+lstm.model12 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history12 <- lstm.model12 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 400, validation_split=0.2)
+
+hist.one.lstm$ten = lstm.two.history10 
+hist.one.lstm$eleven = lstm.two.history11
+hist.one.lstm$twelve = lstm.two.history12
+```
+
+```{r Initial investigation of one layer two inputs lstm - ETH AND GOOGLE}
+goo.eth1 = inputs.eth %>% layer_lstm(units = 10) 
+goo.goo1 = inputs.goo %>% layer_lstm(units = 50)
+goo.out1 = layer_concatenate(c(goo.eth1, goo.goo1)) %>% layer_dense(units = 1)
+goo.model1 <- keras_model(inputs=c(inputs.eth, inputs.goo), outputs=goo.out1)
+goo.model1 %>% compile(loss="mae", optimizer="adam")
+goo.two.history1 <- goo.model1 %>% fit(list(x.train.eth, x.train.goo), y.train, epochs = 400, validation_split=0.2)
+
+goo.eth2 = inputs.eth %>% layer_lstm(units = 100)
+goo.goo2 = inputs.goo %>% layer_lstm(units = 50)
+goo.out2 = layer_concatenate(c(goo.eth2, goo.goo2)) %>% layer_dense(units = 1)
+goo.model2 <- keras_model(inputs=c(inputs.eth, inputs.goo), outputs=goo.out2)
+goo.model2 %>% compile(loss="mae", optimizer="adam")
+goo.two.history2 <- goo.model2 %>% fit(list(x.train.eth, x.train.goo), y.train, epochs = 400, validation_split=0.2)
+
+goo.eth3 = inputs.eth %>% layer_lstm(units = 300)
+goo.goo3 = inputs.goo %>% layer_lstm(units = 50)
+goo.out3 = layer_concatenate(c(goo.eth3, goo.goo3)) %>% layer_dense(units = 1)
+goo.model3 <- keras_model(inputs=c(inputs.eth, inputs.goo), outputs=goo.out3)
+goo.model3 %>% compile(loss="mae", optimizer="adam")
+goo.two.history3 <- goo.model3 %>% fit(list(x.train.eth, x.train.goo), y.train, epochs = 400, validation_split=0.2)
+
+goo.eth4 = inputs.eth %>% layer_lstm(units = 50)
+goo.goo4 = inputs.goo %>% layer_lstm(units = 10)
+goo.out4 = layer_concatenate(c(goo.eth4, goo.goo4)) %>% layer_dense(units = 1)
+goo.model4 <- keras_model(inputs=c(inputs.eth, inputs.goo), outputs=goo.out4)
+goo.model4 %>% compile(loss="mae", optimizer="adam")
+goo.two.history4 <- goo.model4 %>% fit(list(x.train.eth, x.train.goo), y.train, epochs = 400, validation_split=0.2)
+
+goo.eth5 = inputs.eth %>% layer_lstm(units = 50)
+goo.goo5 = inputs.goo %>% layer_lstm(units = 100)
+goo.out5 = layer_concatenate(c(goo.eth5, goo.goo5)) %>% layer_dense(units = 1)
+goo.model5 <- keras_model(inputs=c(inputs.eth, inputs.goo), outputs=goo.out5)
+goo.model5 %>% compile(loss="mae", optimizer="adam")
+goo.two.history5 <- goo.model5 %>% fit(list(x.train.eth, x.train.goo), y.train, epochs = 400, validation_split=0.2)
+
+goo.eth6 = inputs.eth %>% layer_lstm(units = 50)
+goo.goo6 = inputs.goo %>% layer_lstm(units = 300)
+goo.out6 = layer_concatenate(c(goo.eth6, goo.goo6)) %>% layer_dense(units = 1)
+goo.model6 <- keras_model(inputs=c(inputs.eth, inputs.goo), outputs=goo.out6)
+goo.model6 %>% compile(loss="mae", optimizer="adam")
+goo.two.history6 <- goo.model6 %>% fit(list(x.train.eth, x.train.goo), y.train, epochs = 400, validation_split=0.2)
+
+hist.one.goo$one = goo.two.history1
+hist.one.goo$two = goo.two.history2
+hist.one.goo$three = goo.two.history3
+hist.one.goo$four = goo.two.history4
+hist.one.goo$five = goo.two.history5
+hist.one.goo$six = goo.two.history6
+
+```
+
+```{r Deeper models }
+
+more.models = list()
+
+# Two layers before concatinating (no dropout, regulize)
+lstm.eth13 = inputs.eth %>% layer_lstm(units = 200) 
+lstm.tok13 = inputs.tok %>% layer_lstm(units = 500, return_sequences = TRUE) %>%
+  layer_lstm(units  = 200, return_sequences = FALSE)
+final.out13 = layer_concatenate(c(lstm.eth13, lstm.tok13)) %>% layer_dense(units = 1)
+lstm.model13 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out13)
+lstm.model13 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history13 <- lstm.model13 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 300, validation_split=0.2)
+
+more.models$one = lstm.two.history13
+
+lstm.eth14 = inputs.eth %>% layer_lstm(units = 200, return_sequences = TRUE) %>% 
+  layer_lstm(unist = 100, return_sequences = FALSE)
+lstm.tok14 = inputs.tok %>% layer_lstm(units = 500) 
+final.out14 = layer_concatenate(c(lstm.eth14, lstm.tok14)) %>% layer_dense(units = 1)
+lstm.model14 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out14)
+lstm.model14 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history14 <- lstm.model14 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 300, validation_split=0.2)
+
+more.models$two = lstm.two.history14
+
+goo.eth7 = inputs.eth %>% layer_lstm(units = 200)
+goo.goo7 = inputs.goo %>% layer_lstm(units = 500, return_sequences = TRUE) %>% 
+  layer_lstm(units = 200, return_sequences = FALSE)
+goo.out7 = layer_concatenate(c(goo.eth7, goo.goo7)) %>% layer_dense(units = 1)
+goo.model7 <- keras_model(inputs=c(inputs.eth, inputs.goo), outputs=goo.out7)
+goo.model7 %>% compile(loss="mae", optimizer="adam")
+goo.two.history7 <- goo.model7 %>% fit(list(x.train.eth, x.train.goo), y.train, epochs = 300, validation_split=0.2)
+
+more.models$three = goo.two.history7
+
+goo.eth8 = inputs.eth %>% layer_lstm(units = 200, return_sequences = TRUE) %>% 
+  layer_lstm(units = 100, return_sequences = FALSE)
+goo.goo8 = inputs.goo %>% layer_lstm(units = 500) 
+goo.out8 = layer_concatenate(c(goo.eth8, goo.goo8)) %>% layer_dense(units = 1)
+goo.model8 <- keras_model(inputs=c(inputs.eth, inputs.goo), outputs=goo.out8)
+goo.model8 %>% compile(loss="mae", optimizer="adam")
+goo.two.history8 <- goo.model8 %>% fit(list(x.train.eth, x.train.goo), y.train, epochs = 300, validation_split=0.2)
+
+more.models$four = goo.two.history8
+
+### Two layers before concating - with regularization
+lstm.eth15 = inputs.eth %>% layer_lstm(units = 200) 
+lstm.tok15 = inputs.tok %>% layer_lstm(units = 500, return_sequences = TRUE) %>%
+  layer_lstm(units  = 200, return_sequences = FALSE, kernel_regularizer = regularizer_l1(0.3))
+final.out15 = layer_concatenate(c(lstm.eth15, lstm.tok15)) %>% layer_dense(units = 1)
+lstm.model15 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out15)
+lstm.model15 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history15 <- lstm.model15 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 300, validation_split=0.2)
+
+more.models$five = lstm.two.history15
+
+goo.eth9 = inputs.eth %>% layer_lstm(units = 200)
+goo.goo9 = inputs.goo %>% layer_lstm(units = 500, return_sequences = TRUE) %>% 
+  layer_lstm(units = 200, return_sequences = FALSE, kernel_regularizer = regularizer_l1(0.3))
+goo.out9 = layer_concatenate(c(goo.eth9, goo.goo9)) %>% layer_dense(units = 1)
+goo.model9 <- keras_model(inputs=c(inputs.eth, inputs.goo), outputs=goo.out9)
+goo.model9 %>% compile(loss="mae", optimizer="adam")
+goo.two.history9 <- goo.model9 %>% fit(list(x.train.eth, x.train.goo), y.train, epochs = 300, validation_split=0.2)
+
+more.models$six = goo.two.history9
+
+### Multiple layers after concatinating
+lstm.eth16 = inputs.eth %>% layer_lstm(units = 200) 
+lstm.tok16 = inputs.tok %>% layer_lstm(units = 500, return_sequences = TRUE) %>%
+  layer_lstm(units  = 200, return_sequences = FALSE)
+final.out16 = layer_concatenate(c(lstm.eth16, lstm.tok16)) %>% 
+  layer_dense(units = 100, activation = 'relu') %>% 
+  layer_dense(units = 50, activation = 'relu') %>% 
+  layer_dense(units = 1)
+lstm.model16 <- keras_model(inputs=c(inputs.eth, inputs.tok), outputs=final.out16)
+lstm.model16 %>% compile(loss="mae", optimizer="adam")
+lstm.two.history16 <- lstm.model16 %>% fit(list(x.train.eth, x.train.tok), y.train, epochs = 300, validation_split=0.2)
+
+more.models$seven = lstm.two.history16
+
+goo.eth10 = inputs.eth %>% layer_lstm(units = 200)
+goo.goo10 = inputs.goo %>% layer_lstm(units = 500, return_sequences = TRUE) %>% 
+  layer_lstm(units = 200, return_sequences = FALSE)
+goo.out10 = layer_concatenate(c(goo.eth10, goo.goo10)) %>% 
+  layer_dense(units = 100, activation = 'relu') %>% 
+  layer_dense(units = 50, activation = 'relu') %>% 
+  layer_dense(units = 1)
+goo.model10 <- keras_model(inputs=c(inputs.eth, inputs.goo), outputs=goo.out10)
+goo.model10 %>% compile(loss="mae", optimizer="adam")
+goo.two.history10 <- goo.model10 %>% fit(list(x.train.eth, x.train.goo), y.train, epochs = 300, validation_split=0.2)
+
+more.models$eight = goo.two.history10
+
+## BOTH - no additional layers
+three.tok1 = inputs.tok %>% layer_lstm(units = 200)
+three.eth1 = inputs.eth %>% layer_lstm(units = 200) 
+three.goo1 = inputs.goo %>% layer_lstm(units = 200)
+three.out11 = layer_concatenate(c(three.eth1, three.goo1)) %>% layer_dense(units = 1)
+three.out12 = layer_concatenate(c(three.tok1, three.out11)) %>% layer_dense(units = 1)
+three.model1 <- keras_model(inputs=c(inputs.eth, inputs.goo, inputs.tok), outputs=three.out12)
+three.model1 %>% compile(loss="mae", optimizer="adam")
+three.two.history1 <- three.model1 %>% fit(list(x.train.eth, x.train.goo, x.train.tok), y.train, epochs = 300, validation_split=0.2)
+
+more.models$nine = three.two.history1
+
+three.tok2 = inputs.tok %>% layer_lstm(units = 200)
+three.eth2 = inputs.eth %>% layer_lstm(units = 500) 
+three.goo2 = inputs.goo %>% layer_lstm(units = 200)
+three.out21 = layer_concatenate(c(three.eth2, three.goo2)) %>% layer_dense(units = 1)
+three.out22 = layer_concatenate(c(three.tok2, three.out21)) %>% layer_dense(units = 1)
+three.model2 <- keras_model(inputs=c(inputs.eth, inputs.goo, inputs.tok), outputs=three.out22)
+three.model2 %>% compile(loss="mae", optimizer="adam")
+three.two.history2 <- three.model2 %>% fit(list(x.train.eth, x.train.goo, x.train.tok), y.train, epochs = 300, validation_split=0.2)
+
+more.models$ten = three.two.history2
+
+three.tok3 = inputs.tok %>% layer_lstm(units = 200)
+three.eth3 = inputs.eth %>% layer_lstm(units = 200) 
+three.goo3 = inputs.goo %>% layer_lstm(units = 500)
+three.out31 = layer_concatenate(c(three.eth3, three.goo3)) %>% layer_dense(units = 1)
+three.out32 = layer_concatenate(c(three.tok3, three.out31)) %>% layer_dense(units = 1)
+three.model3 <- keras_model(inputs=c(inputs.eth, inputs.goo, inputs.tok), outputs=three.out32)
+three.model3 %>% compile(loss="mae", optimizer="adam")
+three.two.history3 <- three.model3 %>% fit(list(x.train.eth, x.train.goo, x.train.tok), y.train, epochs = 300, validation_split=0.2)
+
+more.models$eleven = three.two.history3
+
+### FUNKY three input
+three.tok4 = inputs.tok %>% layer_lstm(units = 200)
+three.eth4 = inputs.eth %>% layer_lstm(units = 500) 
+three.goo4 = inputs.goo %>% layer_lstm(units = 200)
+three.out41 = layer_concatenate(c(three.eth4, three.goo4)) %>% layer_dense(units = 100)
+three.out42 = layer_concatenate(c(three.tok4, three.out41)) %>% layer_dense(units = 100) %>% 
+        layer_dense(units = 100, activation = 'relu') %>% 
+        layer_dense(units = 50, activation = 'relu') %>% 
+        layer_dense(units = 1)
+three.model4 <- keras_model(inputs=c(inputs.eth, inputs.goo, inputs.tok), outputs=three.out42)
+three.model4 %>% compile(loss="mae", optimizer="adam")
+three.two.history4 <- three.model4 %>% fit(list(x.train.eth, x.train.goo, x.train.tok), y.train, epochs = 300, validation_split=0.2)
+
+more.models$twelve = three.two.history4
+
+```
+
+
+
+
+
+```{r Using just etherium - to check if beats baseline}
+test.model = keras_model_sequential()
+test.model %>% layer_lstm(units=500) 
+test.model %>% layer_dense(units = 1) 
+test.model %>% compile(loss='mae', optimizer = 'adam')
+
+test.history = test.model %>% fit(x.train.eth, y.train, epochs = 300, validation_split = 0.2)
+plot(test.history)
+
+test.history$metrics$val_loss[300]
+
+# 6.818688e-05, 500
+
+```
+
+
